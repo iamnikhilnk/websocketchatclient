@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Chat</title>
+    <script language="javascript" type="text/javascript">
+		var wsUri = "ws://10.10.3.82:8888/";
+		var output;
+		var notification;
+		var messageWindow;
+		var emoticons = [/[:][D]/g, /[:][-]?[)]/g, /[:][-]?[\[]/g, /[;][-]?[)]/g, /[(]laugh[)]/g, 
+			/[:][-]?[}]/g, /[(]rofl[)]/g, /[(]lol[)]/g, /[(][a][)]/g, /[(]6[)]/g ,
+			/__/, /__/, /__/, /[:][-]?[\]]/g, /[:][-]?[B]/g, /[:][-]?[\\]/g, /[:][-]?[|]/g, /[:][-]?[\/]/g,
+			/__/, /__/, /[:][-]?[>]/g, /[:][-]?[*]/g, /[;][-]?[*]/g, /[;][-]?[p|P]/g, /[:][-]?[p|P]/g, 
+			/[:][-]?[@]/g, /[:][-]?[<]/g, /[;][-]?[(]/g, /__/, /__/, /__/, /__/, /__/, /__/, 
+			/__/, /__/, /__/, /[:][o]/g, /[;][o]/g, /__/, /__/, /__/, /__/, /__/,
+			/[:][-]?[(]/g,/__/, /__/, /__/, /__/, /__/,/__/, /__/, /__/, /__/, /__/,
+			/[(][|][)]/g, /[(][o][)]/g, /[(][y][)]/g, /[(][n][)]/g, /[(][|][|][)]/g,
+			/__/, /__/, /__/, /__/, /__/,/__/, /__/, /__/, /__/, /__/,
+			/__/, /__/, /__/, /__/, /__/,/__/, /__/, /__/, /__/,/__/, /[<][3]/g];
+		var replies = ['Server', 'Users'];
+		var commands = ['users'];
+		var tone = document.createElement('audio');
+		
+		function Message() {
+			this.Type;
+			this.MessageBody;
+			this.Sender;
+			this.Recipients = [];
+			this.Attachments = []
+			this.CustomAttributes = {}
+			this.TimeStamp;
+		}
+		
+		function User() {
+			this.Name;
+			this.IP;
+		}
+		
+		var MessageTypes = {
+			"0":"Info",
+			"1":"Error",
+			"2":"UsersList",
+			"3":"Message",
+			"4":"Login",
+			"5":"Logout",
+			"6":"DeliveryReport",
+			"7":"BlackListAdded",
+			"8":"TypingStarted",
+			"9":"TypingStopped",
+			"10":"UserChanged",
+			"11":"Disconnected",
+			"12":"Connected"
+		}
+		
+		var ContentTypes = {
+			"0":"Text",
+			"1":"Image",
+			"2":"Sound",
+			"3":"Video"
+		}
+		
+		function init() {
+			messageWindow = document.getElementById("message");
+			output = document.getElementById("history");
+			initWebSocket();
+			messageWindow.onkeydown = function(e){
+				if(e.which == 13) {
+					if(messageWindow.value.length > 0) {					
+						var message = new Message();
+						message.Type = MessageTypes[3];
+						message.TimeStamp = new Date().getTime();
+						message.MessageBody = messageWindow.value;
+						message.ContentType = ContentTypes[0];
+						if(messageWindow.value[0] = '@') {
+							var recIp = messageWindow.value.match(/^[@]\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/);
+							if(recIp != null && recIp.length > 0) {
+								var recipient = new User();
+								recipient.IP = recIp[0].substring(1);
+								message.Recipients.push(recipient);
+								message.MessageBody = messageWindow.value.substring(recIp[0].length).trim();
+							}
+						}
+						if(message.MessageBody.length > 0) {
+							doSend(message);
+						}
+						messageWindow.value = '';
+					}
+					return false;
+				}
+			}
+			
+			var usersList = document.getElementById('users');
+			
+			usersList.onclick = function(event) {
+				event = event || window.event;
+				var target = event.target || event.srcElement;
+				messageWindow.value = '@' + target.getAttribute('ip') + ' ';
+				messageWindow.focus();
+
+				var pos = messageWindow.value.length;
+				if(messageWindow.setSelectionRange) {
+					messageWindow.focus();
+					messageWindow.setSelectionRange(pos,pos);
+				} else if (messageWindow.createTextRange) {
+					var range = messageWindow.createTextRange();
+					range.collapse(true);
+					range.moveEnd('character', pos);
+					range.moveStart('character', pos);
+					range.select();
+				}
+			};
+			tone.setAttribute('src', 'tones/notify.mp3');
+			tone.type = "audio/mp3";
+		}
+		
+		function initWebSocket() {
+			websocket = new WebSocket(wsUri);
+			websocket.onopen = function(evt) {
+				onOpen(evt)
+			};
+			websocket.onclose = function(evt) {
+				onClose(evt)
+			};
+			websocket.onmessage = function(evt) {
+				onMessage(evt)
+			};
+			websocket.onerror = function(evt) {
+				onError(evt)
+			};
+		}
+		function onOpen(evt) {
+			messageWindow.disabled = false;
+			getUsers();
+		}
+		function onClose(evt) {		
+			messageWindow.disabled = true;
+		}
+		function onMessage(evt) {
+			var color = 'blue';
+			var data = '';
+			var message = JSON.parse(evt.data);
+			
+			switch(message.Type) {
+				case 2:
+					var list = document.getElementById('users');
+					list.innerHTML = '';
+					var users = message.MessageBody;
+					for(var i = 0; i < users.length; i++) {								
+						var item = document.createElement('li');
+						item.appendChild(document.createTextNode(users[i].Name));
+						item.setAttribute("ip", users[i].IP);
+						list.appendChild(item);
+					}
+					break;
+				case 3:
+					var title;
+					if(message.Recipients.length == 1) {
+						if(message.Recipients[0].Name != "*") {
+							title = message.Sender.Name + ' to You';
+						} else {
+							title = message.Sender.Name;
+						}						
+					}
+					showNotification(title, message.MessageBody);
+					if(message.MessageBody.match('https?:\/\/.*\.(?:png|jpg)')) {
+						writeToScreen('<div style="color:' + color + ';">' + title + 
+							'</div><img src="' + message.MessageBody + '" alt="' +  message.MessageBody + '" width="120px" />');
+					} else {
+						writeToScreen('<span style="color:' + color + ';"><b>' + title +'</b> : ' + 
+							format(message.MessageBody) + '<\/span>');
+					}
+					tone.play();
+					break;
+				case 4:
+					break;
+				case 5:
+					break;
+				case 6:
+					break;
+				case 7:
+					color = 'red';
+					writeToScreen('<span style="color:' + color + ';">You\'re a black listed user<\/span>');
+					break;
+				case 8:
+					break;
+				case 9:
+					break;
+				case 10:
+					break;
+				case 11:
+					color = 'red';
+					writeToScreen('<span style="color:' + color + ';">' + message.Sender.Name + ' left<\/span>');
+					getUsers();
+					break;
+				case 12:
+					color = 'red';
+					writeToScreen('<span style="color:' + color + ';">' + message.Sender.Name + ' joined<\/span>');
+					getUsers();
+					break;
+				default:
+					break;
+			}
+		}
+		function onError(evt) {
+			console.log(evt);
+		}
+		function doSend(message) {
+			getPermission();
+			console.log(JSON.stringify(message));
+			websocket.send(JSON.stringify(message));
+			if(message.Type == MessageTypes[2]) {
+			} else {
+				if(message.MessageBody.match('https?:\/\/.*\.(?:png|jpg)')) {
+					writeToScreen('<div><b>Me</b> : </div><img src="' + 
+						message.MessageBody + '" alt="' +  message.MessageBody + '" width="120px" />');
+				} else {				
+					writeToScreen("<b>Me</b> : " + format(message.MessageBody));
+				}
+			}
+		}
+		function writeToScreen(message) {
+			output.innerHTML = message + '</br>' + output.innerHTML;
+		}
+		function getPermission() {
+            if (window.webkitNotifications != null 
+				&& window.webkitNotifications.checkPermission() != 0) {
+                window.webkitNotifications.requestPermission()
+            }
+        }
+		function getUsers() {		
+			var message = new Message();
+			message.Type = MessageTypes[2];
+			message.TimeStamp = new Date().getTime();
+			doSend(message);
+		}
+		function showNotification(header, message) {			
+			if (window.webkitNotifications != null && 
+				window.webkitNotifications.checkPermission() == 0) {
+				closeNotification();
+				notification = window.webkitNotifications.createNotification(
+					'images/chat.png', header, message);
+				notification.show();
+				setTimeout(closeNotification, 5000)
+			} else {
+				if (window.webkitNotifications != null)
+					window.webkitNotifications.requestPermission();
+			}
+		}
+		function closeNotification() {
+			if (notification != null) {
+				if(notification.close != null)
+					notification.close();
+				else if(notification.cancel != null)
+					notification.cancel();
+			}
+		}
+		function format(message) {
+			for(var i = 0; i < emoticons.length; i++) {
+				message = message.replace(emoticons[i], '<img src="images/img_trans.gif" ' +
+					'width=20px height=20px style="background: url(\'images/PeopleAndFaces.png\') 0px ' +
+					+ (-20 * i) + 'px; background-size: 20px;"/>');
+			}
+			return message;
+		}
+		window.addEventListener("load", init, false);
+    </script>
+</head>
+
+<body>	
+	<div style="float: left;">
+		<textarea id="message"></textarea>
+		<div id="history" style="max-height:500px;overflow-y:scroll;max-width: 320px;"></div>
+	</div>
+	<div style=" float:left; padding:5px 20px; border:1px solid; margin:0px 20px;min-width:120px;">
+		<div>Users</div>
+		<ul id="users"></ul>
+	</div>
+</body>
+</html>
